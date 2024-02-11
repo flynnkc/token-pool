@@ -63,7 +63,7 @@ func (tp *TokenPool) run() {
 }
 
 func (tp *TokenPool) refill(n int) {
-	for i := 0; i < n; i++ {
+	for i := 0; i < n && tp.NumTokens() < tp.Capacity(); i++ {
 		tp.retriever <- true
 	}
 }

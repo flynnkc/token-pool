@@ -14,10 +14,10 @@ type TPArgs struct {
 
 var args []TPArgs = []TPArgs{
 	{10, 10, time.Second * 10},
-	{15, 10, time.Second * 10},
 	{30, 10, time.Second * 10},
 	{50, 15, time.Second * 10},
 	{100, 25, time.Second * 10},
+	{10, 15, time.Second * 10},
 }
 
 func TestNewTokenPool(t *testing.T) {
@@ -104,11 +104,12 @@ func TestToken(t *testing.T) {
 			// Check all tokens used
 			if tp.NumTokens() > 0 {
 				t.Errorf("Unexpected NumTokens; Want 0 -- Got %v", tp.NumTokens())
+				t.FailNow()
 			}
 
 			// Test refill function
 			tp.refill(arg.TokenRefill)
-			if tp.NumTokens() != arg.TokenRefill {
+			if tp.NumTokens() != arg.TokenRefill && tp.NumTokens() != arg.MaxTokens {
 				t.Errorf("Retriever refill %v, got retriever length: %v",
 					arg.TokenRefill,
 					tp.NumTokens())
@@ -120,7 +121,7 @@ func TestToken(t *testing.T) {
 				}
 				// Check tokens refilled
 				time.Sleep(arg.TickPeriod + time.Millisecond*150)
-				if tp.NumTokens() != arg.TokenRefill {
+				if tp.NumTokens() != arg.TokenRefill && tp.NumTokens() != tp.Capacity() {
 					t.Errorf("Unexpected retriever length; Want %v -- Got %v",
 						arg.TokenRefill,
 						tp.NumTokens())

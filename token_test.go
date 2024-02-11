@@ -1,24 +1,132 @@
 package tokenpool
 
 import (
-	"slices"
+	"fmt"
 	"testing"
 	"time"
 )
 
+type TPArgs struct {
+	MaxTokens   int
+	TokenRefill int
+	TickPeriod  time.Duration
+}
+
+var args []TPArgs = []TPArgs{
+	{10, 10, time.Second * 10},
+	{15, 10, time.Second * 10},
+	{30, 10, time.Second * 10},
+	{50, 15, time.Second * 10},
+	{100, 25, time.Second * 10},
+}
+
 func TestNewTokenPool(t *testing.T) {
-	maxTokens := 30
-	tp := NewTokenPool(maxTokens, maxTokens, time.Minute)
-	var tokens []int
-	for i := 0; i < maxTokens; i++ {
-		tokens = append(tokens, tp.Token())
+	for _, arg := range args {
+		tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+
+		if tp.NumTokens() != arg.MaxTokens {
+			t.Errorf("Unexpected number of tokens; Want %v -- Got %v",
+				tp.NumTokens(),
+				arg.MaxTokens)
+		}
+
+		if tp.refillTokens != arg.TokenRefill {
+			t.Errorf("Unexpected Token Refill; Want %v -- Got %v",
+				tp.refillTokens,
+				arg.TokenRefill)
+		}
+
+	}
+}
+
+func TestNumTokens(t *testing.T) {
+	arg := args[0]
+	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+
+	if tp.NumTokens() != arg.MaxTokens {
+		t.Errorf("Unexpected NumTokens; Got %v -- Want %v",
+			tp.NumTokens(),
+			arg.MaxTokens)
 	}
 
-	slices.Sort(tokens)
-	if tokens[0] > 1 {
-		t.Errorf("First token value greater than 1 -- Value: %v", tokens[0])
+	for i := 0; i < arg.MaxTokens/2; i++ {
+		_ = tp.Token()
 	}
-	if tokens[len(tokens)-1] > maxTokens {
-		t.Errorf("Last token value greater than %v -- Value: %v", maxTokens, tokens[len(tokens)-1])
+	if tp.NumTokens() != arg.MaxTokens/2 {
+		t.Errorf("Unexpected NumTokens; Got %v -- Want %v",
+			tp.NumTokens(),
+			arg.MaxTokens/2)
+	}
+
+	tp.Drain()
+	if tp.NumTokens() != 0 {
+		t.Errorf("Unexpected NumTokens following drain; Got %v -- Want 0",
+			tp.NumTokens())
+	}
+
+}
+
+func TestDrain(t *testing.T) {
+	arg := args[0]
+	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+	tp.Drain()
+
+	if tp.NumTokens() > 0 {
+		t.Errorf("Unexpected Drain; Want 0 tokens -- Got %v", tp.NumTokens())
+	}
+}
+
+func TestCapacity(t *testing.T) {
+	arg := args[0]
+	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+
+	if tp.Capacity() != arg.MaxTokens {
+		t.Errorf("Unexpected Capacity; Want %v -- Got %v",
+			tp.Capacity(),
+			arg.MaxTokens)
+	}
+}
+
+func TestToken(t *testing.T) {
+	for i, arg := range args {
+
+		i := i
+		arg := arg
+
+		t.Run(fmt.Sprintf("Testing TokenPool %v", i), func(t *testing.T) {
+			t.Parallel()
+
+			tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+			for j := 0; j < arg.MaxTokens; j++ {
+				_ = tp.Token()
+			}
+
+			// Check all tokens used
+			if tp.NumTokens() > 0 {
+				t.Errorf("Unexpected NumTokens; Want 0 -- Got %v", tp.NumTokens())
+			}
+
+			// Test refill function
+			tp.refill(arg.TokenRefill)
+			if tp.NumTokens() != arg.TokenRefill {
+				t.Errorf("Retriever refill %v, got retriever length: %v",
+					arg.TokenRefill,
+					tp.NumTokens())
+			}
+
+			if !testing.Short() {
+				for tp.NumTokens() > 0 {
+					_ = tp.Token()
+				}
+				// Check tokens refilled
+				time.Sleep(arg.TickPeriod + time.Millisecond*150)
+				if tp.NumTokens() != arg.TokenRefill {
+					t.Errorf("Unexpected retriever length; Want %v -- Got %v",
+						arg.TokenRefill,
+						tp.NumTokens())
+				}
+			}
+		})
+
 	}
 }

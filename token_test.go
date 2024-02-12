@@ -87,6 +87,13 @@ func TestCapacity(t *testing.T) {
 	}
 }
 
+func TestClose(t *testing.T) {
+	arg := args[0]
+	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
+
+	tp.Close()
+}
+
 func TestToken(t *testing.T) {
 	for i, arg := range args {
 
@@ -129,5 +136,14 @@ func TestToken(t *testing.T) {
 			}
 		})
 
+	}
+}
+
+func BenchmarkToken(b *testing.B) {
+	tp := NewTokenPool(b.N, b.N, time.Minute)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = tp.Token()
 	}
 }

@@ -14,7 +14,10 @@ tp := NewTokenPool(
 )
 
 for {
-    _ = tp.Token()
-    MakeRequest("https://RateLimitedEndpoint")
+    if tp.Token() {
+        MakeRequest("https://RateLimitedEndpoint")
+    } else {
+        break
+    }
 }
 ```

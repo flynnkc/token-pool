@@ -9,6 +9,7 @@ type TokenPool struct {
 	retriever    chan bool
 	refillTokens int
 	refillTick   time.Duration
+	closed       chan bool
 }
 
 // NewTokenPool takes a maximum token value, number of tokens to add on tick, and
@@ -18,6 +19,7 @@ func NewTokenPool(max, tok int, t time.Duration) *TokenPool {
 		retriever:    make(chan bool, max),
 		refillTokens: tok,
 		refillTick:   t,
+		closed:       make(chan bool, 1),
 	}
 
 	for i := 0; i < cap(tp.retriever); i++ {
@@ -29,9 +31,15 @@ func NewTokenPool(max, tok int, t time.Duration) *TokenPool {
 }
 
 // Token returns a token from the pool, decreasing the number of available
-// tokens by 1.
+// tokens by 1. Token will return true normally and false once the pool is
+// closed.
 func (tp *TokenPool) Token() bool {
-	return <-tp.retriever
+	t, ok := <-tp.retriever
+	if ok {
+		return t
+	} else {
+		return false
+	}
 }
 
 // Drain empties the token pool, leaving 0 tokens until the next tick.
@@ -52,12 +60,24 @@ func (tp *TokenPool) Capacity() int {
 	return cap(tp.retriever)
 }
 
+// Close shuts the token pool down. Tokens may be read until the pool is
+// depleted at which point the token pool will always return false.
+func (tp *TokenPool) Close() {
+	tp.closed <- true
+}
+
 func (tp *TokenPool) run() {
 
 	for {
-		time.Sleep(tp.refillTick)
 
-		tp.refill(tp.refillTokens)
+		select {
+		case <-time.After(tp.refillTick):
+			tp.refill(tp.refillTokens)
+		case <-tp.closed:
+			close(tp.retriever)
+			return
+		}
+
 	}
 
 }

@@ -1,6 +1,7 @@
 package tokenpool
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -13,11 +14,11 @@ type TPArgs struct {
 }
 
 var args []TPArgs = []TPArgs{
-	{10, 10, time.Second * 10},
-	{30, 10, time.Second * 10},
-	{50, 15, time.Second * 10},
-	{100, 25, time.Second * 10},
-	{10, 15, time.Second * 10},
+	{10, 10, 25 * time.Millisecond},
+	{30, 10, 25 * time.Millisecond},
+	{50, 15, 25 * time.Millisecond},
+	{100, 25, 25 * time.Millisecond},
+	{10, 15, 25 * time.Millisecond},
 }
 
 func TestNewTokenPool(t *testing.T) {
@@ -25,13 +26,13 @@ func TestNewTokenPool(t *testing.T) {
 		tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
 
 		if tp.NumTokens() != arg.MaxTokens {
-			t.Errorf("Unexpected number of tokens; Want %v -- Got %v",
+			t.Errorf("Unexpected number of tokens; Got %v -- Want %v",
 				tp.NumTokens(),
 				arg.MaxTokens)
 		}
 
 		if tp.refillTokens != arg.TokenRefill {
-			t.Errorf("Unexpected Token Refill; Want %v -- Got %v",
+			t.Errorf("Unexpected Token Refill; Got %v -- Want %v",
 				tp.refillTokens,
 				arg.TokenRefill)
 		}
@@ -81,7 +82,7 @@ func TestCapacity(t *testing.T) {
 	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
 
 	if tp.Capacity() != arg.MaxTokens {
-		t.Errorf("Unexpected Capacity; Want %v -- Got %v",
+		t.Errorf("Unexpected Capacity; Got %v -- Want %v",
 			tp.Capacity(),
 			arg.MaxTokens)
 	}
@@ -92,6 +93,28 @@ func TestClose(t *testing.T) {
 	tp := NewTokenPool(arg.MaxTokens, arg.TokenRefill, arg.TickPeriod)
 
 	tp.Close()
+}
+
+func TestCloseIdempotentAndTokenAfterClose(t *testing.T) {
+	tp := NewTokenPool(5, 0, 25*time.Millisecond)
+	// Drain to 0 so Token after Close returns false immediately
+	tp.Drain()
+
+	done := make(chan struct{}, 2)
+	go func() { tp.Close(); done <- struct{}{} }()
+	go func() { tp.Close(); done <- struct{}{} }()
+
+	select {
+	case <-done:
+		// ok at least one returned
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Close did not return promptly (possible deadlock)")
+	}
+
+	// After close and drain, Token should return false
+	if tp.Token() {
+		t.Errorf("Token() should return false after close and drain")
+	}
 }
 
 func TestToken(t *testing.T) {
@@ -126,8 +149,8 @@ func TestToken(t *testing.T) {
 				for tp.NumTokens() > 0 {
 					_ = tp.Token()
 				}
-				// Check tokens refilled
-				time.Sleep(arg.TickPeriod + time.Millisecond*150)
+				// Check tokens refilled quickly
+				time.Sleep(arg.TickPeriod + 10*time.Millisecond)
 				if tp.NumTokens() != arg.TokenRefill && tp.NumTokens() != tp.Capacity() {
 					t.Errorf("Unexpected retriever length; Want %v -- Got %v",
 						arg.TokenRefill,
@@ -137,6 +160,59 @@ func TestToken(t *testing.T) {
 		})
 
 	}
+}
+
+func TestTryToken(t *testing.T) {
+	tp := NewTokenPool(2, 0, 25*time.Millisecond)
+	if !tp.TryToken() {
+		t.Fatalf("expected TryToken to succeed when tokens available")
+	}
+	if !tp.TryToken() {
+		t.Fatalf("expected TryToken to succeed when tokens available (second)")
+	}
+	if tp.TryToken() {
+		t.Fatalf("expected TryToken to fail when empty")
+	}
+}
+
+func TestAcquireCancel(t *testing.T) {
+	tp := NewTokenPool(1, 0, 25*time.Millisecond)
+	// consume the single token
+	_ = tp.Token()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	ok := tp.Acquire(ctx)
+	elapsed := time.Since(start)
+	if ok {
+		t.Fatalf("expected Acquire to return false when context times out")
+	}
+	if elapsed < 25*time.Millisecond { // should block until timeout roughly
+		t.Fatalf("Acquire returned too quickly: %v", elapsed)
+	}
+}
+
+func TestValidationPanics(t *testing.T) {
+	// max <= 0
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected panic for max <= 0")
+			}
+		}()
+		_ = NewTokenPool(0, 1, 25*time.Millisecond)
+	}()
+
+	// tick <= 0
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected panic for tick <= 0")
+			}
+		}()
+		_ = NewTokenPool(1, 1, 0)
+	}()
 }
 
 func BenchmarkToken(b *testing.B) {
